@@ -1,0 +1,74 @@
+name: ava-firecrawl
+x-logs: &logs
+  driver: json-file
+  options: {max-size: 10m, max-file: '3'}
+x-dns: &dns
+  NODE_OPTIONS: --require=/opt/ava/dns.cjs
+  AVA_DOH_PROXY: http://host.docker.internal:7897
+  ALLOW_LOCAL_WEBHOOKS: 'false'
+services:
+  api:
+    cpus: 4
+    mem_limit: 2g
+    image: ghcr.io/firecrawl/firecrawl@sha256:c080bc42de0ca3bdba656ed16d6a6dd11ad93ef9d1cb7e69f2d00bb16345f832
+    entrypoint: [node, dist/src/index.js]
+    ports: ['127.0.0.1:3402:3002']
+    environment:
+      <<: *dns
+      HOST: 0.0.0.0
+      PORT: '3002'
+      ENV: local
+      USE_DB_AUTHENTICATION: 'false'
+      REDIS_URL: redis://redis:6379
+      REDIS_RATE_LIMIT_URL: redis://redis:6379
+      PLAYWRIGHT_MICROSERVICE_URL: http://browser:3000/scrape
+      SENTRY_ENVIRONMENT: dev
+      NUQ_BACKEND: pg
+      NUQ_DATABASE_URL: postgresql://unused@127.0.0.1:1/unused
+      NUQ_RABBITMQ_URL: amqp://127.0.0.1:1
+    volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
+    depends_on:
+      redis: {condition: service_healthy}
+      browser: {condition: service_healthy}
+    restart: unless-stopped
+    logging: *logs
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:3002/]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  browser:
+    cpus: 10
+    mem_limit: 5g
+    image: ava-firecrawl-browser:2.11.376
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    environment:
+      <<: *dns
+      PORT: '3000'
+      MAX_CONCURRENT_PAGES: '20'
+    volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
+    restart: unless-stopped
+    logging: *logs
+    shm_size: 1gb
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:3000/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  redis:
+    cpus: 1
+    mem_limit: 256m
+    image: redis@sha256:bd999b5cfee25fb24b8320a31fddbd69f462df44c8138c66e369582937beebc0
+    command: [redis-server, --appendonly, 'yes', --appendfsync, everysec]
+    volumes: [redis-data:/data]
+    restart: unless-stopped
+    logging: *logs
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+volumes:
+  redis-data:

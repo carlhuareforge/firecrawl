@@ -1,0 +1,6 @@
+# Test-only addition for the process-local Clash DNS helper. Firecrawl's
+# application code and Node/Chromium versions are unchanged.
+FROM ghcr.io/firecrawl/playwright-service@sha256:df1a393ce8bfc3801570a826a9b0dcc400ae48789adb4a0ad9d6cbf0229b059b
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl procps ca-certificates && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["node", "dist/api.js"]
