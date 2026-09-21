@@ -26,16 +26,17 @@ services:
       NUQ_BACKEND: pg
       NUQ_DATABASE_URL: postgresql://unused@127.0.0.1:1/unused
       NUQ_RABBITMQ_URL: amqp://127.0.0.1:1
-    volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
+    volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro', './health.cjs:/opt/ava/health.cjs:ro']
     depends_on:
       redis: {condition: service_healthy}
       browser: {condition: service_healthy}
     restart: unless-stopped
     logging: *logs
     healthcheck:
-      test: [CMD, curl, -fsS, http://127.0.0.1:3002/]
-      interval: 30s
-      timeout: 5s
+      test: [CMD, node, /opt/ava/health.cjs]
+      interval: 60s
+      timeout: 40s
+      start_period: 30s
       retries: 3
   browser:
     cpus: 10

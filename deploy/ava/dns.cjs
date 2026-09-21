@@ -2,14 +2,13 @@
 // responses without changing macOS DNS or Firecrawl's address safety checks.
 const dns = require('node:dns');
 const net = require('node:net');
-const fs = require('node:fs');
 const {execFile} = require('node:child_process');
 const original = dns.lookup.bind(dns);
 const cache = new Map();
 const pending = new Map();
 function resolve(host) {
   const saved = cache.get(host);
-  if (saved && saved.expires > Date.now()) return Promise.resolve(saved.records);
+  if (saved && saved.expires > Date.now()) return saved.error ? Promise.reject(saved.error) : Promise.resolve(saved.records);
   if (pending.has(host)) return pending.get(host);
   const promise = new Promise((resolve, reject) => {
     const url = 'https://dns.google/resolve?' + new URLSearchParams({name:host,type:'A'});
@@ -20,11 +19,13 @@ function resolve(host) {
         const records = (data.Answer || []).filter(r => r.type === 1).map(r => ({address:r.data,family:4}));
         if (!records.length) throw Error('No A records');
         const ttl = Math.max(1, Math.min(300, ...data.Answer.filter(r => r.type === 1).map(r => r.TTL || 30)));
-        if (cache.size > 10000) cache.clear();
+        if (cache.size >= 10000) cache.delete(cache.keys().next().value);
         cache.set(host, {records, expires:Date.now()+ttl*1000});resolve(records);
       } catch (cause) {
         const failure = new Error('getaddrinfo ENOTFOUND ' + host, {cause});
-        failure.code='ENOTFOUND';failure.syscall='getaddrinfo';failure.hostname=host;reject(failure);
+        failure.code='ENOTFOUND';failure.syscall='getaddrinfo';failure.hostname=host;
+        if (cache.size >= 10000) cache.delete(cache.keys().next().value);
+        cache.set(host, {error:failure, expires:Date.now()+5000});reject(failure);
       }
     });
   }).finally(() => pending.delete(host));

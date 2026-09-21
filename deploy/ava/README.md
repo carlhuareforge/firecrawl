@@ -17,8 +17,10 @@ single-page requests; this reduced server does not provide working async batch/c
 
 Resources: API 4 CPUs/2 GiB, browser 10 CPUs/5 GiB and 20 simultaneous pages,
 Redis 1 CPU/256 MiB. These are maximums, not reservations. The current Docker VM
-has 16 virtual CPUs and approximately 8 GiB. Start briefer local concurrency at 12;
-its shared batch executor has 8 workers. Multiple briefer processes each have their
+has 16 virtual CPUs and approximately 8 GiB. The briefer caps local HTTP concurrency at 20 (including its readiness probes).
+Batch calls have 16 dedicated coordinator workers and at most four page workers
+each; ordinary tools retain their separate executor. Page admission can wait up
+to 120 seconds without consuming the 20-second fetch budget. Multiple briefer processes each have their
 own limits, so do not multiply processes without reducing those limits.
 
 Persistence: named `redis-data` volume with AOF (every-second fsync). API/browser
@@ -28,15 +30,18 @@ or RabbitMQ is needed for this deployment. Logs rotate at 3 files of 10 MB each.
 
 This host uses Clash Verge. `dns.cjs` resolves public names through Google DNS over
 HTTPS using the existing Clash proxy at host.docker.internal:7897, with bounded,
-TTL-aware in-process caching; localhost and Docker service names use normal DNS.
+TTL-aware in-process caching (five-second negative cache and bounded eviction); localhost and Docker service names use normal DNS.
 It does not disable Firecrawl's private-address checks. The browser image adds curl
 and CA certificates for this helper. If the proxy is unavailable, requests fail and
 the briefer can fall back to Cloud. No static DNS snapshot or system DNS changes
 are required. On a host without Clash, remove NODE_OPTIONS/AVA_DOH_PROXY and the
 DNS helper mounts when using ordinary real-IP DNS.
 
-The health endpoints only establish process/browser availability; verify a real
-scrape for end-to-end readiness. An unhealthy status does not itself restart a
+The API Docker health check performs a fresh DoH lookup, checks the browser and
+scrapes example.com with caching disabled. The briefer also smoke-scrapes that
+known page at startup, periodically and after its circuit cooldown. DNS failures
+and missing browser dependencies therefore fail readiness rather than passing
+on API homepage liveness alone. An unhealthy status does not itself restart a
 running process. Containers restart after process exits. Keep images pinned,
 update deliberately, and run the scraper contract checks before an upgrade.
 
