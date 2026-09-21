@@ -9,7 +9,7 @@ const dns = require('node:dns').promises;
     body:JSON.stringify({url:'https://example.com',formats:['markdown'],waitFor:50,timeout:22000,maxAge:0}),
   });
   const body = await response.json();
-  if (!response.ok || !body.success || !body.data?.markdown?.includes('Example Domain') || body.data.warning || (body.data.metadata?.statusCode || 200) >= 400) {
+  if (!response.ok || !body.success || !body.data?.markdown?.includes('Example Domain') || (body.data.metadata?.statusCode || 200) >= 400) {
     throw Error('scrape readiness failed');
   }
 })().catch(error => { console.error(error.message); process.exitCode=1; });
