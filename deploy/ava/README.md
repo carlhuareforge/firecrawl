@@ -46,3 +46,7 @@ starting the briefer; the prior Cloud route remains available. No data migration
 Fork: origin is the user's fork; upstream is https://github.com/firecrawl/firecrawl.
 Pull upstream updates on a branch, update image digests to the matching builds,
 and repeat the batch-format and live-brief checks before deploying.
+
+If an API source patch is needed, build `apps/api/Dockerfile` from this fork and
+change the Compose API image to that build; editing the checkout alone does not
+change the pinned prebuilt image. The current fork changes deployment files only.
