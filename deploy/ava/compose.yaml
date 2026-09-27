@@ -19,6 +19,7 @@ services:
       PORT: '3002'
       ENV: local
       USE_DB_AUTHENTICATION: 'false'
+      USE_GO_MARKDOWN_PARSER: 'true'
       REDIS_URL: redis://redis:6379
       REDIS_RATE_LIMIT_URL: redis://redis:6379
       PLAYWRIGHT_MICROSERVICE_URL: http://browser:3000/scrape
