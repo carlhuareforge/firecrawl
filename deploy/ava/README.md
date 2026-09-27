@@ -17,7 +17,7 @@ single-page requests; this reduced server does not provide working async batch/c
 
 Resources: API 4 CPUs/2 GiB, browser 10 CPUs/5 GiB and 20 simultaneous pages,
 Redis 1 CPU/256 MiB. These are maximums, not reservations. The current Docker VM
-has 16 virtual CPUs and approximately 8 GiB. The briefer caps local HTTP concurrency at 20 (including its readiness probes).
+has 16 virtual CPUs and 32 GiB (raised from 8 GiB on 2026-09-27; at 20 pages the 8 GiB VM was already swapping). The briefer caps local HTTP concurrency at 20 (including its readiness probes).
 Batch calls have 16 dedicated coordinator workers and at most four page workers
 each; ordinary tools retain their separate executor. Page admission can wait up
 to 120 seconds without consuming the 20-second fetch budget. Multiple briefer processes each have their
@@ -38,11 +38,21 @@ are required. On a host without Clash, remove NODE_OPTIONS/AVA_DOH_PROXY and the
 DNS helper mounts when using ordinary real-IP DNS.
 
 The API Docker health check performs a fresh DoH lookup, checks the browser and
-scrapes example.com with caching disabled. The briefer also smoke-scrapes that
-known page at startup, periodically and after its circuit cooldown. DNS failures
-and missing browser dependencies therefore fail readiness rather than passing
-on API homepage liveness alone. An unhealthy status does not itself restart a
-running process. Containers restart after process exits. Keep images pinned,
+scrapes example.com with caching disabled. The briefer smoke-scrapes that known
+page once, before its first real page (a failed check is retried after 5 seconds);
+after that there is no circuit breaker and no per-site block: a page goes to Cloud
+only for its own failure. DNS failures and missing browser dependencies therefore
+fail readiness rather than passing on API homepage liveness alone. An unhealthy
+status does not itself restart a running process. Containers restart after
+process exits, and the briefer's watchdog (one per host) restarts the api service
+when it stops answering.
+
+The api uses Firecrawl's Go HTML-to-markdown converter (USE_GO_MARKDOWN_PARSER=true).
+The default Turndown table plugin ran on the API's only Node thread and froze every
+request for 12-108 s on pages with huge tables. Known limits of the Go path: a Go
+conversion error is not surfaced (partial output is returned), there is no
+per-conversion timeout, and a native crash ends the API process, which then
+restarts under `restart: unless-stopped` while in-flight pages fall back to Cloud. Keep images pinned,
 update deliberately, and run the scraper contract checks before an upgrade.
 
 Rollback: clear FIRECRAWL_LOCAL_URL or set FIRECRAWL_LOCAL_FORCE_CLOUD=true before
