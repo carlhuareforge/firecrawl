@@ -23,6 +23,14 @@ app.use(express.json());
 
 const BLOCK_MEDIA =
   (process.env.BLOCK_MEDIA || 'False').toUpperCase() === 'TRUE';
+// Resource types (Playwright request.resourceType()) to skip, e.g. "image,media,font".
+// Text extraction never reads them. Unset or empty means nothing extra is blocked.
+const BLOCK_RESOURCE_TYPES = new Set(
+  (process.env.BLOCK_RESOURCE_TYPES || '')
+    .split(',')
+    .map((type) => type.trim().toLowerCase())
+    .filter(Boolean),
+);
 const MAX_CONCURRENT_PAGES = Math.max(
   1,
   Number.parseInt(process.env.MAX_CONCURRENT_PAGES ?? '10', 10) || 10,
@@ -240,6 +248,14 @@ const createContext = async (
   await newContext.route(
     '**/*',
     async (route: Route, request: PlaywrightRequest) => {
+      // Skip heavy sub-resources before any lookup. A navigation always loads, so a direct
+      // image or PDF URL still scrapes as before.
+      if (
+        BLOCK_RESOURCE_TYPES.has(request.resourceType()) &&
+        !request.isNavigationRequest()
+      ) {
+        return route.abort('blockedbyclient');
+      }
       const requestUrlString = request.url();
       try {
         await assertSafeTargetUrl(requestUrlString);

@@ -40,9 +40,9 @@ services:
       start_period: 30s
       retries: 3
   browser:
-    cpus: 10
+    cpus: 16
     mem_limit: 5g
-    image: ava-firecrawl-browser:2.11.376
+    image: ava-firecrawl-browser:2.11.376-rb1
     build:
       context: .
       dockerfile: Dockerfile.browser
@@ -50,6 +50,7 @@ services:
       <<: *dns
       PORT: '3000'
       MAX_CONCURRENT_PAGES: '20'
+      BLOCK_RESOURCE_TYPES: image,media,font
     volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
     restart: unless-stopped
     logging: *logs
