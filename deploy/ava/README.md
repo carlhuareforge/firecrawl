@@ -1,8 +1,9 @@
 # Ava local scrape deployment
 
-Pinned Firecrawl source: v2.11.376 / 95c8ab18f524d1aa813cca2a6dc8bd39191504ec.
-The API image contains that BUILD_SHA. The browser base image is pinned separately
-and its compiled application matches this checkout. No Firecrawl API code was changed.
+Pinned Firecrawl source: v2.11.805 / 87202348f7b3c5273c237fe8b47d3c2568f4938c.
+The API image contains that FIRECRAWL_BUILD_SHA. The browser base image is pinned separately
+(Playwright 1.65.0, Node 22.23.5) with its compiled dist/api.js checksum-verified before applying
+the BLOCK_RESOURCE_TYPES patch. No Firecrawl API code was changed.
 
 Run from this repository:
 

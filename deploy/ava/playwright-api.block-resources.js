@@ -18,9 +18,8 @@ const playwright_1 = require("playwright");
 const dotenv_1 = __importDefault(require("dotenv"));
 const user_agents_1 = __importDefault(require("user-agents"));
 const get_error_1 = require("./helpers/get_error");
-const promises_1 = require("dns/promises");
-const ipaddr_js_1 = __importDefault(require("ipaddr.js"));
 const proxy_chain_1 = require("proxy-chain");
+const ssrf_1 = require("./helpers/ssrf");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const port = process.env.PORT || 3003;
@@ -44,25 +43,6 @@ class InsecureConnectionError extends Error {
         this.name = 'InsecureConnectionError';
     }
 }
-const isInternalHost = (hostname) => __awaiter(void 0, void 0, void 0, function* () {
-    const host = hostname.toLowerCase().replace(/\.$/, '');
-    if (!host)
-        return true;
-    let addresses;
-    if (ipaddr_js_1.default.isValid(host)) {
-        addresses = [host];
-    }
-    else {
-        try {
-            addresses = (yield (0, promises_1.lookup)(host, { all: true })).map((a) => a.address);
-        }
-        catch (_a) {
-            return true;
-        }
-    }
-    return (addresses.length === 0 ||
-        addresses.some((a) => ipaddr_js_1.default.parse(a).range() !== 'unicast'));
-});
 const assertSafeTargetUrl = (urlString) => __awaiter(void 0, void 0, void 0, function* () {
     let parsedUrl;
     try {
@@ -74,7 +54,7 @@ const assertSafeTargetUrl = (urlString) => __awaiter(void 0, void 0, void 0, fun
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
         throw new InsecureConnectionError(urlString, `unsupported protocol "${parsedUrl.protocol}"`);
     }
-    if (!ALLOW_LOCAL_WEBHOOKS && (yield isInternalHost(parsedUrl.hostname))) {
+    if (!ALLOW_LOCAL_WEBHOOKS && (yield (0, ssrf_1.isInternalHost)(parsedUrl.hostname))) {
         throw new InsecureConnectionError(urlString, 'resolves to a private/internal address');
     }
 });
@@ -95,11 +75,9 @@ const startSSRFProxy = () => __awaiter(void 0, void 0, void 0, function* () {
     const server = new proxy_chain_1.Server({
         port: 0,
         host: '127.0.0.1',
-        prepareRequestFunction: (_a) => __awaiter(void 0, [_a], void 0, function* ({ hostname }) {
-            if (!ALLOW_LOCAL_WEBHOOKS && (yield isInternalHost(hostname))) {
-                throw new proxy_chain_1.RequestError('Blocked: target resolves to a private/internal address', 403);
-            }
-            return { upstreamProxyUrl: buildUpstreamProxyUrl() };
+        prepareRequestFunction: (0, ssrf_1.ssrfPrepareRequest)({
+            allowLocal: ALLOW_LOCAL_WEBHOOKS,
+            upstreamProxyUrl: buildUpstreamProxyUrl(),
         }),
     });
     yield server.listen();
@@ -259,7 +237,7 @@ const scrapePage = (page, url, waitUntil, waitAfterLoad, timeout, checkSelector,
             throw new Error('Required selector not found');
         }
     }
-    let headers = null, content = yield page.content();
+    let headers = null, content = yield page.content(), landedUrl = page.url();
     let ct = undefined;
     if (response) {
         headers = yield response.allHeaders();
@@ -268,10 +246,15 @@ const scrapePage = (page, url, waitUntil, waitAfterLoad, timeout, checkSelector,
             (ct.toLowerCase().includes('application/json') ||
                 ct.toLowerCase().includes('text/plain'))) {
             content = (yield response.body()).toString('utf8'); // TODO: determine real encoding
+            landedUrl = response.url();
         }
     }
     return {
         content,
+        // Where the returned content came from: page.url() for rendered HTML
+        // (covers HTTP 3xx and client-side redirects), response.url() for raw
+        // JSON/text bodies, which come from the page.goto response.
+        url: landedUrl,
         status: response ? response.status() : null,
         headers,
         contentType: ct,
@@ -419,7 +402,7 @@ app.post('/scrape', (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         else {
             console.log(`🚨 Scrape failed with status code: ${result.status} ${pageError}`);
         }
-        res.json(Object.assign({ content: result.content, pageStatusCode: result.status, contentType: result.contentType }, (pageError && { pageError })));
+        res.json(Object.assign({ content: result.content, pageStatusCode: result.status, contentType: result.contentType, url: result.url }, (pageError && { pageError })));
     }
     catch (error) {
         if (error instanceof InsecureConnectionError) {

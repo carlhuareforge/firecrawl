@@ -10,7 +10,7 @@ services:
   api:
     cpus: 4
     mem_limit: 2g
-    image: ghcr.io/firecrawl/firecrawl@sha256:c080bc42de0ca3bdba656ed16d6a6dd11ad93ef9d1cb7e69f2d00bb16345f832
+    image: ghcr.io/firecrawl/firecrawl@sha256:3bc963b8f9ea7a7cd72e967e7fe4fb95e384ee9900bf99becbce32572ff5cda1
     entrypoint: [node, dist/src/index.js]
     ports: ['127.0.0.1:3402:3002']
     environment:
@@ -42,7 +42,7 @@ services:
   browser:
     cpus: 16
     mem_limit: 5g
-    image: ava-firecrawl-browser:2.11.376-rb1
+    image: ava-firecrawl-browser:2.11.805-rb1
     build:
       context: .
       dockerfile: Dockerfile.browser
@@ -51,6 +51,7 @@ services:
       PORT: '3000'
       MAX_CONCURRENT_PAGES: '20'
       BLOCK_RESOURCE_TYPES: image,media,font
+      DEBUG: pw:browser
     volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
     restart: unless-stopped
     logging: *logs
