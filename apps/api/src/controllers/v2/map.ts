@@ -26,6 +26,9 @@ import {
   resolveThreatProtection,
 } from "../../lib/threat-protection/request";
 import { calculateThreatScanCredits } from "../../lib/scrape-billing";
+import { isSelfHosted } from "../../lib/deployment";
+import { useFireEngine } from "../../scraper/scrapeURL/engines/fire-engine/available";
+import { useIndex as hasPageIndex } from "../../services/index";
 
 configDotenv();
 
@@ -231,6 +234,10 @@ export async function mapController(
         location: req.body.location,
         headers: req.body.headers,
         id: mapId,
+        startPageDiscovery:
+          isSelfHosted() && !useFireEngine && !hasPageIndex
+            ? { threatProtection: threatProtection.policy ?? undefined }
+            : undefined,
       }),
       ...(req.body.timeout !== undefined
         ? [

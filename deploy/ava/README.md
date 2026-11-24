@@ -1,20 +1,34 @@
-# Ava local scrape deployment
+# Ava local Firecrawl deployment
 
-Pinned Firecrawl source: v2.11.805 / 87202348f7b3c5273c237fe8b47d3c2568f4938c.
-The API image contains that FIRECRAWL_BUILD_SHA. The browser base image is pinned separately
+The API image `ava-firecrawl-api:2.11.805-map1` builds on Firecrawl v2.11.805
+(`87202348f7b3c5273c237fe8b47d3c2568f4938c`). It compiles the fork's two Map
+source files into the pinned image. `FIRECRAWL_BUILD_SHA` records the fork commit.
+The browser base image is pinned separately
 (Playwright 1.65.0, Node 22.23.5) with its compiled dist/api.js checksum-verified before applying
-the BLOCK_RESOURCE_TYPES patch. No Firecrawl API code was changed.
+the BLOCK_RESOURCE_TYPES patch.
 
 Run from this repository:
 
 ```sh
-docker compose -f deploy/ava/compose.yaml up -d --build --wait
+AVA_FIRECRAWL_BUILD_SHA="$(git rev-parse HEAD)" \
+  docker compose -f deploy/ava/compose.yaml up -d --build --wait
 ```
 
 API: http://127.0.0.1:3402. Only the API port is published, on loopback.
 The briefer enables it with `FIRECRAWL_LOCAL_URL=http://127.0.0.1:3402`.
-Search and map remain on Cloud. Batch tools are grouped by the briefer using bounded
+The briefer sends Search and Map to Cloud. The local `/v2/map` endpoint adds
+links from the starting page to its sitemap results. Batch tools are grouped by the briefer using bounded
 single-page requests; this reduced server does not provide working async batch/crawl.
+
+Run the local Map regression checks against the built image. The test stack has
+its own network and Redis volume. The fixture is the only website it uses.
+
+```sh
+docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml build fixture
+docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml up -d --wait --no-build
+docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml exec -T fixture node --test /test/map.e2e.cjs
+docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml down --volumes
+```
 
 Resources: API 4 CPUs/2 GiB, browser 16 CPUs/5 GiB and 20 simultaneous pages,
 Redis 1 CPU/256 MiB. These are maximums, not reservations. The current Docker VM
@@ -73,6 +87,7 @@ Fork: origin is the user's fork; upstream is https://github.com/firecrawl/firecr
 Pull upstream updates on a branch, update image digests to the matching builds,
 and repeat the batch-format and live-brief checks before deploying.
 
-If an API source patch is needed, build `apps/api/Dockerfile` from this fork and
-change the Compose API image to that build; editing the checkout alone does not
-change the pinned prebuilt image. The current fork changes deployment files only.
+When updating the upstream release, update the API base image and recheck the
+Map source files against that release. Use the full API build at
+`apps/api/Dockerfile` when a change needs different dependencies, native code,
+or runtime files outside the two Map modules.

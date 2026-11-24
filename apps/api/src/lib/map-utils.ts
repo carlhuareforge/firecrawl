@@ -25,9 +25,14 @@ import {
 } from "../services/index";
 import { performCosineSimilarityV2 } from "./map-cosine";
 import { Logger } from "winston";
+import { scrapeURL, type InternalOptions } from "../scraper/scrapeURL";
+import { CostTracking } from "./cost-tracking";
+import { extractBaseDomain } from "./url-utils";
 
 // Max Links that "Smart /map" can return
 const MAX_FIRE_ENGINE_RESULTS = 100;
+const START_PAGE_BUDGET_MS = 8_000;
+const START_PAGE_BROWSER_WAIT_MS = 1_500;
 
 export interface MapResult {
   success: boolean;
@@ -50,6 +55,51 @@ function dedupeMapDocumentArray(documents: MapDocument[]): MapDocument[] {
   }
 
   return Array.from(urlMap.values());
+}
+
+function startPageLinkKey(url: string): string {
+  const { hostname, port, pathname, search } = new URL(url);
+  return `${hostname.replace(/^www\./, "")}:${port}${pathname.replace(/\/$/, "")}${search}`;
+}
+
+async function scrapeMapStartPage(
+  url: string,
+  options: ScrapeOptions,
+  internalOptions: InternalOptions,
+  deadline: number,
+  waitFor = 0,
+): Promise<string[] | null> {
+  const timeout = deadline - Date.now();
+  if (timeout <= waitFor || internalOptions.externalAbort?.signal.aborted) {
+    return null;
+  }
+
+  const result = await scrapeURL(
+    uuidv7(),
+    url,
+    scrapeOptions.parse({
+      ...options,
+      formats: ["links"],
+      onlyMainContent: false,
+      storeInCache: false,
+      timeout,
+      waitFor,
+    }),
+    { ...internalOptions },
+    new CostTracking(),
+  );
+  if (!result.success) return null;
+
+  const { statusCode, contentType } = result.document.metadata;
+  if (
+    statusCode < 200 ||
+    statusCode >= 300 ||
+    (contentType &&
+      !/^(text\/html|application\/xhtml\+xml)\b/i.test(contentType))
+  ) {
+    return null;
+  }
+  return result.document.links ?? [];
 }
 
 export async function queryIndex(
@@ -100,6 +150,7 @@ export async function getMapResults({
   maxFireEngineResults = MAX_FIRE_ENGINE_RESULTS,
   id: providedId,
   zeroDataRetention: requestZeroDataRetention = false,
+  startPageDiscovery,
 }: {
   url: string;
   search?: string;
@@ -123,8 +174,10 @@ export async function getMapResults({
   id?: string;
   /** The calling request's own zero data retention, on top of the team's. */
   zeroDataRetention?: boolean;
+  startPageDiscovery?: Pick<InternalOptions, "threatProtection">;
 }): Promise<MapResult> {
   const functionStartTime = Date.now();
+  const startUrl = url;
 
   // Safe Mode lockdown: serve links from the index only — skip live search +
   // sitemap discovery. Derived here from the team flags so every caller
@@ -338,51 +391,143 @@ export async function getMapResults({
     }
   }
 
-  mapResults = mapResults
-    .map(x => {
+  const normalizeResults = (results: MapDocument[]): MapDocument[] => {
+    const scopedPath =
+      filterByPath && !allowExternalLinks
+        ? URL.parse(url)?.pathname
+        : undefined;
+    return results.flatMap(result => {
       try {
-        return {
-          ...x,
-          url: checkAndUpdateURLForMap(
-            x.url,
-            crawlerOptions.ignoreQueryParameters ?? true,
-          ).url.trim(),
-        };
-      } catch (_) {
-        return null;
+        const candidate = checkAndUpdateURLForMap(
+          result.url,
+          crawlerOptions.ignoreQueryParameters ?? true,
+        ).url.trim();
+        if (
+          !isSameDomain(candidate, url) ||
+          (!includeSubdomains && !isSameSubdomain(candidate, url)) ||
+          (scopedPath &&
+            scopedPath.length > 1 &&
+            !new URL(candidate).pathname.startsWith(scopedPath))
+        ) {
+          return [];
+        }
+        return [{ ...result, url: candidate }];
+      } catch {
+        return [];
       }
-    })
-    .filter(x => x !== null) as MapDocument[];
+    });
+  };
 
-  mapResults = mapResults.filter(x => isSameDomain(x.url, url));
+  mapResults = dedupeMapDocumentArray(normalizeResults(mapResults)).slice(
+    0,
+    limit,
+  );
 
-  if (!includeSubdomains) {
-    mapResults = mapResults.filter(x => isSameSubdomain(x.url, url));
-  }
+  const discoveryBudget = Math.min(
+    START_PAGE_BUDGET_MS,
+    (crawlerOptions.timeout ?? 30_000) - (Date.now() - functionStartTime) - 100,
+  );
+  if (
+    startPageDiscovery &&
+    crawlerOptions.sitemap === "include" &&
+    !search &&
+    !indexOnly &&
+    !abort.aborted &&
+    discoveryBudget > 0 &&
+    mapResults.length < limit &&
+    crawler.isRobotsAllowed(startUrl) &&
+    crawler.isRobotsAllowed(resolvedUrl)
+  ) {
+    const deadline = Date.now() + Math.ceil(discoveryBudget);
+    const signal = AbortSignal.any([
+      abort,
+      AbortSignal.timeout(Math.ceil(discoveryBudget)),
+    ]);
+    const internalOptions: InternalOptions = {
+      ...startPageDiscovery,
+      teamId,
+      orgId: orgId ?? null,
+      teamFlags: flags,
+      zeroDataRetention,
+      bypassBilling: true,
+      externalAbort: {
+        signal,
+        tier: "external",
+        throwable: () => signal.reason,
+      },
+    };
+    const options = {
+      ...sc.scrapeOptions,
+      ...(ignoreCache ? { maxAge: 0 } : {}),
+      ...(crawlerOptions.useMock ? { useMock: crawlerOptions.useMock } : {}),
+    };
 
-  if (filterByPath && !allowExternalLinks) {
     try {
-      const urlObj = new URL(url);
-      const urlPath = urlObj.pathname;
-      // Only apply path filtering if the URL has a significant path (not just '/' or empty)
-      // This means we only filter by path if the user has not selected a root domain
-      if (urlPath && urlPath !== "/" && urlPath.length > 1) {
-        mapResults = mapResults.filter(x => {
-          try {
-            const linkObj = new URL(x.url);
-            return linkObj.pathname.startsWith(urlPath);
-          } catch (e) {
-            return false;
+      const baseDomain = extractBaseDomain(url);
+      const seedKeys = new Set(
+        [startUrl, resolvedUrl].map(seed =>
+          startPageLinkKey(
+            checkAndUpdateURLForMap(
+              seed,
+              crawlerOptions.ignoreQueryParameters ?? true,
+            ).url,
+          ),
+        ),
+      );
+      const existingKeys = new Set(
+        mapResults.map(link => startPageLinkKey(link.url)),
+      );
+      const additionalLinks = (links: string[]): MapDocument[] => {
+        const candidates = links.flatMap(link => {
+          const target = URL.parse(link);
+          if (
+            !target ||
+            !["http:", "https:"].includes(target.protocol) ||
+            target.username ||
+            target.password ||
+            (baseDomain && extractBaseDomain(target.href) !== baseDomain)
+          ) {
+            return [];
           }
+          target.hash = "";
+          return [{ url: target.href }];
         });
+        const seen = new Set([...seedKeys, ...existingKeys]);
+        return normalizeResults(candidates).filter(link => {
+          const key = startPageLinkKey(link.url);
+          if (seen.has(key) || !crawler.isRobotsAllowed(link.url)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+
+      const links = await scrapeMapStartPage(
+        startUrl,
+        options,
+        internalOptions,
+        deadline,
+      );
+      if (links !== null) {
+        let extra = additionalLinks(links);
+        if (
+          !extra.length &&
+          mapResults.every(link => seedKeys.has(startPageLinkKey(link.url)))
+        ) {
+          const rendered = await scrapeMapStartPage(
+            startUrl,
+            options,
+            internalOptions,
+            deadline,
+            START_PAGE_BROWSER_WAIT_MS,
+          );
+          if (rendered !== null) extra = additionalLinks(rendered);
+        }
+        mapResults = mapResults.concat(extra).slice(0, limit);
       }
-    } catch (e) {
-      // If URL parsing fails, continue without path filtering
+    } catch {
+      // Optional discovery must not discard sitemap results.
     }
   }
-
-  mapResults = dedupeMapDocumentArray(mapResults);
-  mapResults = mapResults.slice(0, limit);
 
   const totalTimeMs = Date.now() - functionStartTime;
 
