@@ -1,0 +1,11 @@
+# Test-only addition for the process-local Clash DNS helper, plus one patch to the
+# browser service: BLOCK_RESOURCE_TYPES skips images, video and fonts (the same change
+# as apps/playwright-service-ts/api.ts). Node/Chromium versions are unchanged.
+FROM ghcr.io/firecrawl/playwright-service@sha256:227ce3d8059173925a5a0697c63a1e947662cca934a609151651f578774edd5d
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl procps ca-certificates && rm -rf /var/lib/apt/lists/*
+# The checksum pins the upstream file the patch was made from; a base-image bump fails here
+# instead of silently dropping the patch.
+RUN echo "7b76d496d68bbaf46b6fede33e8063336e00583ded8901a1c5d3296b883d231e  dist/api.js" | sha256sum -c -
+COPY playwright-api.block-resources.js dist/api.js
+ENTRYPOINT ["node", "dist/api.js"]
