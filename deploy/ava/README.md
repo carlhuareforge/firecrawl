@@ -1,11 +1,11 @@
 # Ava local Firecrawl deployment
 
-The API image `ava-firecrawl-api:2.11.805-map1` builds on Firecrawl v2.11.805
+The API image `ava-firecrawl-api:2.11.805-map2` builds on Firecrawl v2.11.805
 (`87202348f7b3c5273c237fe8b47d3c2568f4938c`). It compiles the fork's two Map
-source files into the pinned image. `FIRECRAWL_BUILD_SHA` records the fork commit.
-The browser base image is pinned separately
-(Playwright 1.65.0, Node 22.23.5) with its compiled dist/api.js checksum-verified before applying
-the BLOCK_RESOURCE_TYPES patch.
+source files into the pinned image after verifying the upstream files.
+`FIRECRAWL_BUILD_SHA` records the required fork commit.
+The browser image compiles `apps/playwright-service-ts/api.ts` into the separately
+pinned Playwright 1.65.0 image after verifying its upstream module.
 
 Run from this repository:
 
@@ -16,15 +16,17 @@ AVA_FIRECRAWL_BUILD_SHA="$(git rev-parse HEAD)" \
 
 API: http://127.0.0.1:3402. Only the API port is published, on loopback.
 The briefer enables it with `FIRECRAWL_LOCAL_URL=http://127.0.0.1:3402`.
-The briefer sends Search and Map to Cloud. The local `/v2/map` endpoint adds
-links from the starting page to its sitemap results. Batch tools are grouped by the briefer using bounded
+The briefer sends Search and Map to Cloud. Local `/v2/map` checks each origin's
+robots rules and uses at most two simultaneous browser retries per API process.
+Batch tools are grouped by the briefer using bounded
 single-page requests; this reduced server does not provide working async batch/crawl.
 
 Run the local Map regression checks against the built image. The test stack has
 its own network and Redis volume. The fixture is the only website it uses.
 
 ```sh
-docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml build fixture
+AVA_FIRECRAWL_BUILD_SHA="$(git rev-parse HEAD)" \
+  docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml build api browser fixture
 docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml up -d --wait --no-build
 docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml exec -T fixture node --test /test/map.e2e.cjs
 docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml down --volumes
@@ -40,10 +42,9 @@ own limits, so do not multiply processes without reducing those limits.
 
 Bandwidth, not CPU, limits local scraping: this host's route tops out near 24 Mbit/s.
 The browser therefore skips images, video and fonts (`BLOCK_RESOURCE_TYPES: image,media,font`;
-the page navigation itself is never blocked). The patch lives in
-`playwright-api.block-resources.js`, copied over the upstream `dist/api.js` in
-`Dockerfile.browser` after a checksum check, so a base-image bump fails the build instead of
-silently dropping it. Upstream `BLOCK_MEDIA` does nothing (a later catch-all route always
+the page navigation itself is exempt). The filter lives in the TypeScript browser
+source. The API and browser image builds check their upstream modules before replacing
+them. Upstream `BLOCK_MEDIA` does nothing (a later catch-all route always
 continues). Remove the variable and recreate the browser to roll back without a rebuild.
 In a 300-URL A/B this gave 2.2x the accepted pages and cut timeouts from 28% to 3%.
 Raising page concurrency above 20 does not help: the link, not the browser, is the limit.
@@ -82,6 +83,16 @@ update deliberately, and run the scraper contract checks before an upgrade.
 
 Rollback: clear FIRECRAWL_LOCAL_URL or set FIRECRAWL_LOCAL_FORCE_CLOUD=true before
 starting the briefer; the prior Cloud route remains available. No data migration.
+
+To restore the upstream API image, recreate the API service with this Compose override.
+
+```sh
+docker compose -f deploy/ava/compose.yaml -f - up -d --no-deps --no-build --wait api <<'YAML'
+services:
+  api:
+    image: ghcr.io/firecrawl/firecrawl@sha256:3bc963b8f9ea7a7cd72e967e7fe4fb95e384ee9900bf99becbce32572ff5cda1
+YAML
+```
 
 Fork: origin is the user's fork; upstream is https://github.com/firecrawl/firecrawl.
 Pull upstream updates on a branch, update image digests to the matching builds,

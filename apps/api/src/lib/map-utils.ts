@@ -33,6 +33,9 @@ import { extractBaseDomain } from "./url-utils";
 const MAX_FIRE_ENGINE_RESULTS = 100;
 const START_PAGE_BUDGET_MS = 8_000;
 const START_PAGE_BROWSER_WAIT_MS = 1_500;
+const MAX_MAP_BROWSER_SCRAPES = 2;
+const MAX_MAP_ROBOTS_ORIGINS = 8;
+let activeMapBrowserScrapes = 0;
 
 export interface MapResult {
   success: boolean;
@@ -68,38 +71,52 @@ async function scrapeMapStartPage(
   internalOptions: InternalOptions,
   deadline: number,
   waitFor = 0,
-): Promise<string[] | null> {
+): Promise<{ url: string; links: string[] } | null> {
   const timeout = deadline - Date.now();
-  if (timeout <= waitFor || internalOptions.externalAbort?.signal.aborted) {
-    return null;
-  }
-
-  const result = await scrapeURL(
-    uuidv7(),
-    url,
-    scrapeOptions.parse({
-      ...options,
-      formats: ["links"],
-      onlyMainContent: false,
-      storeInCache: false,
-      timeout,
-      waitFor,
-    }),
-    { ...internalOptions },
-    new CostTracking(),
-  );
-  if (!result.success) return null;
-
-  const { statusCode, contentType } = result.document.metadata;
   if (
-    statusCode < 200 ||
-    statusCode >= 300 ||
-    (contentType &&
-      !/^(text\/html|application\/xhtml\+xml)\b/i.test(contentType))
+    timeout < 1_000 ||
+    internalOptions.externalAbort?.signal.aborted ||
+    (waitFor > 0 && activeMapBrowserScrapes >= MAX_MAP_BROWSER_SCRAPES)
   ) {
     return null;
   }
-  return result.document.links ?? [];
+
+  if (waitFor > 0) activeMapBrowserScrapes++;
+  try {
+    const result = await scrapeURL(
+      uuidv7(),
+      url,
+      scrapeOptions.parse({
+        ...options,
+        formats: ["links"],
+        onlyMainContent: false,
+        storeInCache: false,
+        proxy: "basic",
+        timeout,
+        waitFor: Math.min(waitFor, Math.floor(timeout / 2)),
+      }),
+      { ...internalOptions, forceEngine: waitFor > 0 ? "playwright" : "fetch" },
+      new CostTracking(),
+    );
+    if (!result.success) return null;
+
+    const {
+      statusCode,
+      contentType,
+      url: landedUrl,
+    } = result.document.metadata;
+    if (
+      statusCode < 200 ||
+      statusCode >= 300 ||
+      (contentType &&
+        !/^(text\/html|application\/xhtml\+xml)\b/i.test(contentType))
+    ) {
+      return null;
+    }
+    return { url: landedUrl ?? url, links: result.document.links ?? [] };
+  } finally {
+    if (waitFor > 0) activeMapBrowserScrapes--;
+  }
 }
 
 export async function queryIndex(
@@ -394,7 +411,7 @@ export async function getMapResults({
   const normalizeResults = (results: MapDocument[]): MapDocument[] => {
     const scopedPath =
       filterByPath && !allowExternalLinks
-        ? URL.parse(url)?.pathname
+        ? URL.parse(url)?.pathname.replace(/\/+$/, "")
         : undefined;
     return results.flatMap(result => {
       try {
@@ -402,12 +419,13 @@ export async function getMapResults({
           result.url,
           crawlerOptions.ignoreQueryParameters ?? true,
         ).url.trim();
+        const path = new URL(candidate).pathname;
         if (
           !isSameDomain(candidate, url) ||
           (!includeSubdomains && !isSameSubdomain(candidate, url)) ||
           (scopedPath &&
-            scopedPath.length > 1 &&
-            !new URL(candidate).pathname.startsWith(scopedPath))
+            path !== scopedPath &&
+            !path.startsWith(scopedPath + "/"))
         ) {
           return [];
         }
@@ -433,10 +451,8 @@ export async function getMapResults({
     !search &&
     !indexOnly &&
     !abort.aborted &&
-    discoveryBudget > 0 &&
-    mapResults.length < limit &&
-    crawler.isRobotsAllowed(startUrl) &&
-    crawler.isRobotsAllowed(resolvedUrl)
+    discoveryBudget >= 1_000 &&
+    mapResults.length < limit
   ) {
     const deadline = Date.now() + Math.ceil(discoveryBudget);
     const signal = AbortSignal.any([
@@ -456,14 +472,57 @@ export async function getMapResults({
         throwable: () => signal.reason,
       },
     };
+    const startOrigin = new URL(startUrl).origin;
     const options = {
       ...sc.scrapeOptions,
+      // A Map request's headers belong to the origin the caller supplied.
+      headers:
+        new URL(resolvedUrl).origin === startOrigin ? headers : undefined,
       ...(ignoreCache ? { maxAge: 0 } : {}),
       ...(crawlerOptions.useMock ? { useMock: crawlerOptions.useMock } : {}),
     };
 
     try {
       const baseDomain = extractBaseDomain(url);
+      const isInSite = (target: string) =>
+        isSameDomain(target, url) &&
+        (!baseDomain || extractBaseDomain(target) === baseDomain);
+      const robotsByOrigin = new Map<
+        string,
+        Promise<ReturnType<typeof crawlToCrawler>>
+      >();
+      if (sc.robots !== undefined) {
+        robotsByOrigin.set(new URL(url).origin, Promise.resolve(crawler));
+      }
+      const isAllowedByRobots = async (target: string): Promise<boolean> => {
+        if (signal.aborted) return false;
+        const origin = new URL(target).origin;
+        let rules = robotsByOrigin.get(origin);
+        if (!rules) {
+          if (robotsByOrigin.size >= MAX_MAP_ROBOTS_ORIGINS) return false;
+          const originCrawler = crawlToCrawler(
+            id,
+            {
+              ...sc,
+              originUrl: origin,
+              robots: undefined,
+              scrapeOptions: { ...sc.scrapeOptions, headers: undefined },
+            },
+            flags,
+          );
+          rules = originCrawler.getRobotsTxt(false, signal).then(content => {
+            originCrawler.importRobotsTxt(content);
+            return originCrawler;
+          });
+          robotsByOrigin.set(origin, rules);
+        }
+        try {
+          const originCrawler = await rules;
+          return !signal.aborted && originCrawler.isRobotsAllowed(target);
+        } catch {
+          return false;
+        }
+      };
       const seedKeys = new Set(
         [startUrl, resolvedUrl].map(seed =>
           startPageLinkKey(
@@ -477,15 +536,22 @@ export async function getMapResults({
       const existingKeys = new Set(
         mapResults.map(link => startPageLinkKey(link.url)),
       );
-      const additionalLinks = (links: string[]): MapDocument[] => {
-        const candidates = links.flatMap(link => {
+      const additionalLinks = async (page: {
+        url: string;
+        links: string[];
+      }): Promise<MapDocument[] | null> => {
+        if (!isInSite(page.url) || !(await isAllowedByRobots(page.url))) {
+          return null;
+        }
+        const candidates = page.links.flatMap(link => {
           const target = URL.parse(link);
           if (
             !target ||
             !["http:", "https:"].includes(target.protocol) ||
             target.username ||
             target.password ||
-            (baseDomain && extractBaseDomain(target.href) !== baseDomain)
+            !isInSite(target.href) ||
+            crawler.isFile(target.pathname)
           ) {
             return [];
           }
@@ -493,34 +559,45 @@ export async function getMapResults({
           return [{ url: target.href }];
         });
         const seen = new Set([...seedKeys, ...existingKeys]);
-        return normalizeResults(candidates).filter(link => {
+        const extra: MapDocument[] = [];
+        for (const link of normalizeResults(candidates)) {
           const key = startPageLinkKey(link.url);
-          if (seen.has(key) || !crawler.isRobotsAllowed(link.url)) return false;
+          if (seen.has(key)) continue;
           seen.add(key);
-          return true;
-        });
+          if (await isAllowedByRobots(link.url)) extra.push(link);
+          if (signal.aborted || mapResults.length + extra.length >= limit)
+            break;
+        }
+        return extra;
       };
 
-      const links = await scrapeMapStartPage(
-        startUrl,
-        options,
-        internalOptions,
-        deadline,
-      );
-      if (links !== null) {
-        let extra = additionalLinks(links);
+      const [startAllowed, resolvedAllowed] = await Promise.all([
+        isAllowedByRobots(startUrl),
+        isAllowedByRobots(resolvedUrl),
+      ]);
+      const page =
+        startAllowed && resolvedAllowed
+          ? await scrapeMapStartPage(
+              resolvedUrl,
+              options,
+              internalOptions,
+              deadline,
+            )
+          : null;
+      let extra = page ? await additionalLinks(page) : null;
+      if (extra !== null) {
         if (
           !extra.length &&
           mapResults.every(link => seedKeys.has(startPageLinkKey(link.url)))
         ) {
           const rendered = await scrapeMapStartPage(
-            startUrl,
+            resolvedUrl,
             options,
             internalOptions,
             deadline,
             START_PAGE_BROWSER_WAIT_MS,
           );
-          if (rendered !== null) extra = additionalLinks(rendered);
+          if (rendered) extra = (await additionalLinks(rendered)) ?? extra;
         }
         mapResults = mapResults.concat(extra).slice(0, limit);
       }
