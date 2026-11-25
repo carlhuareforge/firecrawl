@@ -10,7 +10,12 @@ services:
   api:
     cpus: 4
     mem_limit: 2g
-    image: ghcr.io/firecrawl/firecrawl@sha256:3bc963b8f9ea7a7cd72e967e7fe4fb95e384ee9900bf99becbce32572ff5cda1
+    image: ava-firecrawl-api:2.11.805-map2
+    build:
+      context: ../..
+      dockerfile: deploy/ava/Dockerfile.api
+      args:
+        GIT_SHA: ${AVA_FIRECRAWL_BUILD_SHA:-}
     entrypoint: [node, dist/src/index.js]
     ports: ['127.0.0.1:3402:3002']
     environment:
@@ -42,10 +47,10 @@ services:
   browser:
     cpus: 16
     mem_limit: 5g
-    image: ava-firecrawl-browser:2.11.805-rb1
+    image: ava-firecrawl-browser:2.11.805-rb3
     build:
-      context: .
-      dockerfile: Dockerfile.browser
+      context: ../..
+      dockerfile: deploy/ava/Dockerfile.browser
     environment:
       <<: *dns
       PORT: '3000'
