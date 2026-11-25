@@ -94,6 +94,16 @@ services:
 YAML
 ```
 
+To roll back only the browser service, use the previous local browser image.
+
+```sh
+docker compose -f deploy/ava/compose.yaml -f - up -d --no-deps --no-build --wait browser <<'YAML'
+services:
+  browser:
+    image: ava-firecrawl-browser:2.11.805-rb2
+YAML
+```
+
 Fork: origin is the user's fork; upstream is https://github.com/firecrawl/firecrawl.
 Pull upstream updates on a branch, update image digests to the matching builds,
 and repeat the batch-format and live-brief checks before deploying.

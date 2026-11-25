@@ -47,7 +47,7 @@ services:
   browser:
     cpus: 16
     mem_limit: 5g
-    image: ava-firecrawl-browser:2.11.805-rb2
+    image: ava-firecrawl-browser:2.11.805-rb3
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.browser

@@ -231,6 +231,13 @@ const createContext = async (
   await newContext.route(
     '**/*',
     async (route: Route, request: PlaywrightRequest) => {
+      if (
+        BLOCK_RESOURCE_TYPES.has(request.resourceType()) &&
+        !request.isNavigationRequest()
+      ) {
+        return route.abort();
+      }
+
       const requestUrlString = request.url();
       try {
         await assertSafeTargetUrl(requestUrlString);
@@ -247,12 +254,6 @@ const createContext = async (
 
       const hostname = new URL(requestUrlString).hostname.toLowerCase();
 
-      if (
-        BLOCK_RESOURCE_TYPES.has(request.resourceType()) &&
-        !request.isNavigationRequest()
-      ) {
-        return route.abort();
-      }
       if (AD_SERVING_DOMAINS.some((domain) => hostname.includes(domain))) {
         console.log(hostname);
         return route.abort();
