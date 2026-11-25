@@ -1,6 +1,6 @@
 # Ava local Firecrawl deployment
 
-The API image `ava-firecrawl-api:2.11.805-map2` builds on Firecrawl v2.11.805
+The API image `ava-firecrawl-api:2.11.805-map3` builds on Firecrawl v2.11.805
 (`87202348f7b3c5273c237fe8b47d3c2568f4938c`). It compiles the fork's two Map
 source files into the pinned image after verifying the upstream files.
 `FIRECRAWL_BUILD_SHA` records the required fork commit.
@@ -16,7 +16,8 @@ AVA_FIRECRAWL_BUILD_SHA="$(git rev-parse HEAD)" \
 
 API: http://127.0.0.1:3402. Only the API port is published, on loopback.
 The briefer enables it with `FIRECRAWL_LOCAL_URL=http://127.0.0.1:3402`.
-The briefer sends Search and Map to Cloud. Local `/v2/map` checks each origin's
+The briefer tries local Map first. It can use Firecrawl Cloud if local Map is
+disabled, fails, or returns no links beyond the starting URL. Local `/v2/map` checks each origin's
 robots rules and uses at most two simultaneous browser retries per API process.
 Batch tools are grouped by the briefer using bounded
 single-page requests; this reduced server does not provide working async batch/crawl.
@@ -94,13 +95,15 @@ services:
 YAML
 ```
 
-To roll back only the browser service, use the previous local browser image.
+To restore the previous local Map and browser release together:
 
 ```sh
-docker compose -f deploy/ava/compose.yaml -f - up -d --no-deps --no-build --wait browser <<'YAML'
+docker compose -f deploy/ava/compose.yaml -f - up -d --no-deps --no-build --wait api browser <<'YAML'
 services:
+  api:
+    image: ava-firecrawl-api:2.11.805-map2
   browser:
-    image: ava-firecrawl-browser:2.11.805-rb2
+    image: ava-firecrawl-browser:2.11.805-rb3
 YAML
 ```
 

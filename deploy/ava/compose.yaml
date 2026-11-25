@@ -10,7 +10,7 @@ services:
   api:
     cpus: 4
     mem_limit: 2g
-    image: ava-firecrawl-api:2.11.805-map2
+    image: ava-firecrawl-api:2.11.805-map3
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.api
@@ -47,7 +47,7 @@ services:
   browser:
     cpus: 16
     mem_limit: 5g
-    image: ava-firecrawl-browser:2.11.805-rb3
+    image: ava-firecrawl-browser:2.11.805-rb4
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.browser
