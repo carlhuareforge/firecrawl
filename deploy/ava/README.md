@@ -33,22 +33,24 @@ docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.
 docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml down --volumes
 ```
 
-Resources: API 4 CPUs/2 GiB, browser 16 CPUs/5 GiB and 20 simultaneous pages,
+Resources: API 4 CPUs/2 GiB, browser 16 CPUs/12 GiB and 80 simultaneous pages,
 Redis 1 CPU/256 MiB. These are maximums, not reservations. The current Docker VM
-has 16 virtual CPUs and 32 GiB (raised from 8 GiB on 2026-09-27; at 20 pages the 8 GiB VM was already swapping). The briefer caps local HTTP concurrency at 20 (including its readiness probes).
+has 16 virtual CPUs and 32 GiB. Set `FIRECRAWL_LOCAL_CONCURRENCY=80` in the
+briefer's `.env` to use the new browser capacity. Its default is 20.
 Batch calls have 16 dedicated coordinator workers and at most four page workers
 each; ordinary tools retain their separate executor. Page admission can wait up
 to 120 seconds without consuming the 20-second fetch budget. Multiple briefer processes each have their
 own limits, so do not multiply processes without reducing those limits.
 
-Bandwidth, not CPU, limits local scraping: this host's route tops out near 24 Mbit/s.
-The browser therefore skips images, video and fonts (`BLOCK_RESOURCE_TYPES: image,media,font`;
+The browser skips images, video and fonts to reduce bandwidth (`BLOCK_RESOURCE_TYPES: image,media,font`;
 the page navigation itself is exempt). The filter lives in the TypeScript browser
 source. The API and browser image builds check their upstream modules before replacing
 them. Upstream `BLOCK_MEDIA` does nothing (a later catch-all route always
 continues). Remove the variable and recreate the browser to roll back without a rebuild.
 In a 300-URL A/B this gave 2.2x the accepted pages and cut timeouts from 28% to 3%.
-Raising page concurrency above 20 does not help: the link, not the browser, is the limit.
+In the November 26 test, all 80 homepages scraped successfully in 13 seconds at
+80 slots and 12 GiB, compared with 30 seconds at 20 slots. The browser ran out
+of memory at 80 slots with the old 5 GiB cap.
 
 Persistence: named `redis-data` volume with AOF (every-second fsync). API/browser
 are replaceable; retain research evidence in the briefer's existing run artifacts.

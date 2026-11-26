@@ -46,7 +46,7 @@ services:
       retries: 3
   browser:
     cpus: 16
-    mem_limit: 5g
+    mem_limit: 12g
     image: ava-firecrawl-browser:2.11.805-rb4
     build:
       context: ../..
@@ -54,7 +54,7 @@ services:
     environment:
       <<: *dns
       PORT: '3000'
-      MAX_CONCURRENT_PAGES: '20'
+      MAX_CONCURRENT_PAGES: '80'
       BLOCK_RESOURCE_TYPES: image,media,font
       DEBUG: pw:browser
     volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
