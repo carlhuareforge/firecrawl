@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+ARG BASE_IMAGE=ghcr.io/firecrawl/firecrawl@sha256:3efd1edfb6309fac0251cd9c5a13fbe7719dd0d7d5c4b456568009b0534ff6d8
+FROM ${BASE_IMAGE} AS compile
+WORKDIR /app
+RUN printf '%s\n' \
+  '5e964e5e7569ec127b5652a8428d23601c8f62d4d795528c398222100fac6331  dist/src/lib/map-utils.js' \
+  '43b2eaa81d09ef938e3b9dbd0ca0773d0725dc95f504a35c732845f48e356ba9  dist/src/controllers/v2/map.js' \
+  '6500fe7f20d148650a42d11f0b85554b6581016f3c386b71d36f4f3a27a8fd2a  dist/src/scraper/scrapeURL/engines/fetch/index.js' \
+  'a2e6e9957c1a9905de26914308b0b7dfa8df8581eb8d1cf3d1905a6963126998  dist/src/scraper/scrapeURL/engines/document/index.js' \
+  '91c6e87a1d9183b0a6e427c487a2ffdbb58264daf0f216cc5e40ac0138c7984d  dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js' \
+  | sha256sum -c -
+COPY apps/api/src/lib/map-utils.ts /tmp/map-patch/lib/map-utils.ts
+COPY apps/api/src/controllers/v2/map.ts /tmp/map-patch/controllers/v2/map.ts
+COPY apps/api/src/scraper/scrapeURL/engines/fetch/index.ts /tmp/map-patch/scraper/scrapeURL/engines/fetch/index.ts
+COPY apps/api/src/scraper/scrapeURL/engines/document/index.ts /tmp/map-patch/scraper/scrapeURL/engines/document/index.ts
+COPY apps/api/src/scraper/scrapeURL/engines/utils/specialtyHandler.ts /tmp/map-patch/scraper/scrapeURL/engines/utils/specialtyHandler.ts
+RUN node -e '\
+  const fs = require("node:fs"); \
+  const ts = require("typescript"); \
+  for (const file of [ \
+    "lib/map-utils.ts", \
+    "controllers/v2/map.ts", \
+    "scraper/scrapeURL/engines/fetch/index.ts", \
+    "scraper/scrapeURL/engines/document/index.ts", \
+    "scraper/scrapeURL/engines/utils/specialtyHandler.ts" \
+  ]) { \
+    const input = "/tmp/map-patch/" + file; \
+    const result = ts.transpileModule(fs.readFileSync(input, "utf8"), { \
+      fileName: input, reportDiagnostics: true, \
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, esModuleInterop: true } \
+    }); \
+    if (result.diagnostics.length) throw new Error(result.diagnostics.map(x => ts.flattenDiagnosticMessageText(x.messageText, "\n")).join("\n")); \
+    fs.writeFileSync(input.replace(/\.ts$/, ".js"), result.outputText); \
+  }'
+
+FROM ${BASE_IMAGE}
+COPY --from=compile /tmp/map-patch/lib/map-utils.js /app/dist/src/lib/map-utils.js
+COPY --from=compile /tmp/map-patch/controllers/v2/map.js /app/dist/src/controllers/v2/map.js
+COPY --from=compile /tmp/map-patch/scraper/scrapeURL/engines/fetch/index.js /app/dist/src/scraper/scrapeURL/engines/fetch/index.js
+COPY --from=compile /tmp/map-patch/scraper/scrapeURL/engines/document/index.js /app/dist/src/scraper/scrapeURL/engines/document/index.js
+COPY --from=compile /tmp/map-patch/scraper/scrapeURL/engines/utils/specialtyHandler.js /app/dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js
+ARG GIT_SHA
+ENV FIRECRAWL_BUILD_SHA=${GIT_SHA}
+LABEL org.opencontainers.image.source="https://github.com/carlhuareforge/firecrawl" \
+      org.opencontainers.image.revision=${GIT_SHA}
+RUN printf '%s\n' "$FIRECRAWL_BUILD_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+    && printf '%s\n' "$FIRECRAWL_BUILD_SHA" > /app/BUILD_SHA \
+    && rm -f \
+      /app/dist/src/lib/map-utils.js.map \
+      /app/dist/src/controllers/v2/map.js.map \
+      /app/dist/src/scraper/scrapeURL/engines/fetch/index.js.map \
+      /app/dist/src/scraper/scrapeURL/engines/document/index.js.map \
+      /app/dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js.map

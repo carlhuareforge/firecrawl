@@ -1,0 +1,6 @@
+*
+!apps/api/src/lib/map-utils.ts
+!apps/api/src/controllers/v2/map.ts
+!apps/api/src/scraper/scrapeURL/engines/fetch/index.ts
+!apps/api/src/scraper/scrapeURL/engines/document/index.ts
+!apps/api/src/scraper/scrapeURL/engines/utils/specialtyHandler.ts

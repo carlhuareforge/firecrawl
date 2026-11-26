@@ -1,0 +1,37 @@
+services:
+  api:
+    ports: !reset []
+    volumes: !reset []
+    environment:
+      NODE_OPTIONS: ''
+      ALLOW_LOCAL_WEBHOOKS: 'true'
+      TEST_SUITE_SELF_HOSTED: 'true'
+      MAP_MAX_BROWSER_SCRAPES: '2'
+      MAP_BROWSER_WAIT_MS: '0'
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:3002/]
+      interval: 2s
+  browser:
+    volumes: !reset []
+    environment:
+      NODE_OPTIONS: ''
+      ALLOW_LOCAL_WEBHOOKS: 'true'
+  fixture:
+    image: ava-firecrawl-map-fixture:2.11.872-map1
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM ghcr.io/firecrawl/firecrawl@sha256:3efd1edfb6309fac0251cd9c5a13fbe7719dd0d7d5c4b456568009b0534ff6d8
+        COPY map.e2e.cjs /test/map.e2e.cjs
+    entrypoint: [node, /test/map.e2e.cjs, fixture]
+    networks:
+      default:
+        aliases: [maps.fixture.test, rebranded.fixture2.test]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8080/robots.txt]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+networks:
+  default:
+    internal: true
