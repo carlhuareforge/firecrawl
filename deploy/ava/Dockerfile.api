@@ -5,13 +5,22 @@ WORKDIR /app
 RUN printf '%s\n' \
   '8b783b7dbf6478b34f3124ccb298a41934d166cf307b9e25fff7b6d793cc9dba  dist/src/lib/map-utils.js' \
   '23e3395c0beb30c85efb92e8c96da4df915defff12fbaf409fdea12c4fa97e99  dist/src/controllers/v2/map.js' \
+  '6500fe7f20d148650a42d11f0b85554b6581016f3c386b71d36f4f3a27a8fd2a  dist/src/scraper/scrapeURL/engines/fetch/index.js' \
+  '924b2e4eb7330e3c6196d27b559ce6f6acd6f671fdd44804e86d15b4e1978337  dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js' \
   | sha256sum -c -
 COPY apps/api/src/lib/map-utils.ts /tmp/map-patch/lib/map-utils.ts
 COPY apps/api/src/controllers/v2/map.ts /tmp/map-patch/controllers/v2/map.ts
+COPY apps/api/src/scraper/scrapeURL/engines/fetch/index.ts /tmp/map-patch/scraper/scrapeURL/engines/fetch/index.ts
+COPY apps/api/src/scraper/scrapeURL/engines/utils/specialtyHandler.ts /tmp/map-patch/scraper/scrapeURL/engines/utils/specialtyHandler.ts
 RUN node -e '\
   const fs = require("node:fs"); \
   const ts = require("typescript"); \
-  for (const file of ["lib/map-utils.ts", "controllers/v2/map.ts"]) { \
+  for (const file of [ \
+    "lib/map-utils.ts", \
+    "controllers/v2/map.ts", \
+    "scraper/scrapeURL/engines/fetch/index.ts", \
+    "scraper/scrapeURL/engines/utils/specialtyHandler.ts" \
+  ]) { \
     const input = "/tmp/map-patch/" + file; \
     const result = ts.transpileModule(fs.readFileSync(input, "utf8"), { \
       fileName: input, reportDiagnostics: true, \
@@ -24,10 +33,16 @@ RUN node -e '\
 FROM ${BASE_IMAGE}
 COPY --from=compile /tmp/map-patch/lib/map-utils.js /app/dist/src/lib/map-utils.js
 COPY --from=compile /tmp/map-patch/controllers/v2/map.js /app/dist/src/controllers/v2/map.js
+COPY --from=compile /tmp/map-patch/scraper/scrapeURL/engines/fetch/index.js /app/dist/src/scraper/scrapeURL/engines/fetch/index.js
+COPY --from=compile /tmp/map-patch/scraper/scrapeURL/engines/utils/specialtyHandler.js /app/dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js
 ARG GIT_SHA
 ENV FIRECRAWL_BUILD_SHA=${GIT_SHA}
 LABEL org.opencontainers.image.source="https://github.com/carlhuareforge/firecrawl" \
       org.opencontainers.image.revision=${GIT_SHA}
 RUN printf '%s\n' "$FIRECRAWL_BUILD_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && printf '%s\n' "$FIRECRAWL_BUILD_SHA" > /app/BUILD_SHA \
-    && rm -f /app/dist/src/lib/map-utils.js.map /app/dist/src/controllers/v2/map.js.map
+    && rm -f \
+      /app/dist/src/lib/map-utils.js.map \
+      /app/dist/src/controllers/v2/map.js.map \
+      /app/dist/src/scraper/scrapeURL/engines/fetch/index.js.map \
+      /app/dist/src/scraper/scrapeURL/engines/utils/specialtyHandler.js.map

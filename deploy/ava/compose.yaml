@@ -9,8 +9,8 @@ x-dns: &dns
 services:
   api:
     cpus: 4
-    mem_limit: 2g
-    image: ava-firecrawl-api:2.11.805-map3
+    mem_limit: 8g
+    image: ava-firecrawl-api:2.11.805-map4
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.api

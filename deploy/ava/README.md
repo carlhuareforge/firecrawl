@@ -1,8 +1,9 @@
 # Ava local Firecrawl deployment
 
-The API image `ava-firecrawl-api:2.11.805-map3` builds on Firecrawl v2.11.805
+The API image `ava-firecrawl-api:2.11.805-map4` builds on Firecrawl v2.11.805
 (`87202348f7b3c5273c237fe8b47d3c2568f4938c`). It compiles the fork's two Map
-source files into the pinned image after verifying the upstream files.
+source files plus the HTTP `fetch` binary/size guards into the pinned image
+after verifying the upstream files.
 `FIRECRAWL_BUILD_SHA` records the required fork commit.
 The browser image compiles `apps/playwright-service-ts/api.ts` into the separately
 pinned Playwright 1.65.0 image after verifying its upstream module.
@@ -33,9 +34,11 @@ docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.
 docker compose -p ava-map-test -f deploy/ava/compose.yaml -f deploy/ava/compose.map-test.yaml down --volumes
 ```
 
-Resources: API 4 CPUs/2 GiB, browser 16 CPUs/12 GiB and 80 simultaneous pages,
+Resources: API 4 CPUs/8 GiB, browser 16 CPUs/12 GiB and 80 simultaneous pages,
 Redis 1 CPU/256 MiB. These are maximums, not reservations. The current Docker VM
-has 16 virtual CPUs and 32 GiB. Set `FIRECRAWL_LOCAL_CONCURRENCY=80` in the
+has 16 virtual CPUs and 32 GiB. The HTTP `fetch` fallback rejects binary
+downloads on the first chunk and caps HTML/text response bodies at 50 MiB.
+Set `FIRECRAWL_LOCAL_CONCURRENCY=80` in the
 briefer's `.env` to use the new browser capacity. Its default is 20.
 Batch calls have 16 dedicated coordinator workers and at most four page workers
 each; ordinary tools retain their separate executor. Page admission can wait up
@@ -103,9 +106,9 @@ To restore the previous local Map and browser release together:
 docker compose -f deploy/ava/compose.yaml -f - up -d --no-deps --no-build --wait api browser <<'YAML'
 services:
   api:
-    image: ava-firecrawl-api:2.11.805-map2
+    image: ava-firecrawl-api:2.11.805-map3
   browser:
-    image: ava-firecrawl-browser:2.11.805-rb3
+    image: ava-firecrawl-browser:2.11.805-rb4
 YAML
 ```
 
@@ -114,6 +117,6 @@ Pull upstream updates on a branch, update image digests to the matching builds,
 and repeat the batch-format and live-brief checks before deploying.
 
 When updating the upstream release, update the API base image and recheck the
-Map source files against that release. Use the full API build at
+patched Map and fetch source files against that release. Use the full API build at
 `apps/api/Dockerfile` when a change needs different dependencies, native code,
-or runtime files outside the two Map modules.
+or runtime files outside those patched modules.
