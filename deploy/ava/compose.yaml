@@ -10,7 +10,7 @@ services:
   api:
     cpus: 4
     mem_limit: 8g
-    image: ava-firecrawl-api:2.11.805-map4
+    image: ava-firecrawl-api:2.11.805-map5
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.api
@@ -25,6 +25,8 @@ services:
       ENV: local
       USE_DB_AUTHENTICATION: 'false'
       USE_GO_MARKDOWN_PARSER: 'true'
+      MAP_MAX_BROWSER_SCRAPES: '16'
+      MAP_BROWSER_WAIT_MS: '3000'
       REDIS_URL: redis://redis:6379
       REDIS_RATE_LIMIT_URL: redis://redis:6379
       PLAYWRIGHT_MICROSERVICE_URL: http://browser:3000/scrape

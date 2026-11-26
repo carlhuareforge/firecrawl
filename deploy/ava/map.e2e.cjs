@@ -5,6 +5,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 
 const fixture = "http://maps.fixture.test:8080";
 const landed = "http://maps.fixture.test:8081";
+const rebranded = "http://rebranded.fixture2.test:8082";
 const api = "http://api:3002";
 const browser = "http://browser:3000";
 
@@ -12,7 +13,9 @@ function serveFixture() {
   const getCounts = {};
   const serve = async (request, response) => {
     const { pathname } = new URL(request.url, fixture);
-    const onLandedOrigin = request.socket.localPort === 8081;
+    const localPort = request.socket.localPort;
+    const onLandedOrigin = localPort === 8081;
+    const onRebrandedOrigin = localPort === 8082;
     if (request.method === "GET") {
       getCounts[pathname] = (getCounts[pathname] ?? 0) + 1;
     }
@@ -21,9 +24,11 @@ function serveFixture() {
     switch (pathname) {
       case "/robots.txt":
         contentType = "text/plain";
-        body = onLandedOrigin
-          ? "User-agent: *\nDisallow: /private\nDisallow: /denied-landing\n"
-          : `User-agent: *\nDisallow: /docs/hidden\nDisallow: /denied-source\nSitemap: ${fixture}/sitemap.xml\n`;
+        body = onRebrandedOrigin
+          ? "User-agent: *\nAllow: /\nDisallow: /secret\n"
+          : onLandedOrigin
+            ? "User-agent: *\nDisallow: /private\nDisallow: /denied-landing\n"
+            : `User-agent: *\nDisallow: /docs/hidden\nDisallow: /denied-source\nSitemap: ${fixture}/sitemap.xml\n`;
         break;
       case "/sitemap.xml":
         contentType = "text/xml";
@@ -31,6 +36,26 @@ function serveFixture() {
           <url><loc>${fixture}/docs/listed</loc></url>
           <url><loc>${fixture}/broken/listed</loc></url>
         </urlset>`;
+        break;
+      case "/catalog/sitemap.xml":
+        contentType = "text/xml";
+        body = `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <sitemap><loc>${fixture}/fast-child-sitemap.xml</loc></sitemap>
+          <sitemap><loc>${fixture}/hung-child-sitemap.xml</loc></sitemap>
+        </sitemapindex>`;
+        break;
+      case "/fast-child-sitemap.xml":
+        contentType = "text/xml";
+        body = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>${fixture}/catalog/one</loc></url>
+          <url><loc>${fixture}/catalog/two</loc></url>
+          <url><loc>${fixture}/catalog/three</loc></url>
+        </urlset>`;
+        break;
+      case "/hung-child-sitemap.xml":
+        await delay(15_000);
+        contentType = "text/xml";
+        body = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>`;
         break;
       case "/docs":
         body = `<html><body>
@@ -65,6 +90,56 @@ function serveFixture() {
           }, 250);
         </script></body></html>`;
         break;
+      case "/cf-shell":
+        body = `<html><body>
+          <a href="/cdn-cgi/l/email-protection">Contact</a>
+          <a href="/_next/image?url=%2Fhero.png">Hero</a>
+          <script>
+            setTimeout(() => {
+              const link = document.createElement("a");
+              link.href = "/cf-shell/team";
+              link.textContent = "Team";
+              document.body.append(link);
+            }, 150);
+          </script>
+        </body></html>`;
+        break;
+      case "/waf-protected":
+        if ((getCounts[pathname] ?? 0) <= 1) {
+          response.statusCode = 403;
+          body = "Forbidden by WAF on plain fetch";
+        } else {
+          body = '<html><body><a href="/waf-protected/pricing">Pricing</a></body></html>';
+        }
+        break;
+      case "/single-page":
+        body = `<html><head><title>Acme Robotics</title></head><body>
+          <h1>Autonomous Warehouse Manipulation</h1>
+          <p>Acme Robotics builds dexterous mobile manipulators for cold-chain fulfillment centers across North America and Europe with deterministic grasp planning.</p>
+          <a href="https://github.com/acme/robotics">GitHub</a>
+        </body></html>`;
+        break;
+      case "/challenge-wall":
+        body = `<html><head><title>Just a moment...</title></head><body>
+          <p>Checking your browser before accessing this website. Verify you are human to continue.</p>
+        </body></html>`;
+        break;
+      case "/slow-domain-redirect":
+        if (request.method === "HEAD" || (getCounts[pathname] ?? 0) <= 1) {
+          await delay(2_300);
+        }
+        response.writeHead(301, { Location: `${rebranded}/` });
+        response.end();
+        return;
+      case "/":
+        if (onRebrandedOrigin) {
+          body =
+            '<html><body><a href="/product">Product</a><a href="/secret/plan">Secret</a></body></html>';
+          break;
+        }
+        response.statusCode = 404;
+        body = "Missing";
+        break;
       case "/move":
       case "/denied-source":
       case "/move-to-denied":
@@ -82,9 +157,9 @@ function serveFixture() {
       case "/denied-landing":
         body = '<html><a href="/unlisted-page">Unlisted</a></html>';
         break;
-      case "/forbidden":
-        response.statusCode = 403;
-        body = "Forbidden";
+      case "/not-found":
+        response.statusCode = 404;
+        body = "Not Found";
         break;
       case "/disconnect/a":
       case "/disconnect/b":
@@ -115,9 +190,14 @@ function serveFixture() {
   };
   createServer(serve).listen(8080, "0.0.0.0");
   createServer(serve).listen(8081, "0.0.0.0");
+  createServer(serve).listen(8082, "0.0.0.0");
 }
 
-async function map(path, options = {}, signal = AbortSignal.timeout(18_000)) {
+async function mapWithMeta(
+  path,
+  options = {},
+  signal = AbortSignal.timeout(18_000),
+) {
   const response = await fetch(`${api}/v2/map`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -127,7 +207,16 @@ async function map(path, options = {}, signal = AbortSignal.timeout(18_000)) {
   const result = await response.json();
   assert.equal(response.status, 200, JSON.stringify(result));
   assert.equal(result.success, true);
-  return result.links.map((link) => link.url);
+  return {
+    links: result.links.map((link) => link.url),
+    outcome: response.headers.get("x-firecrawl-map-outcome"),
+    statusCode: response.headers.get("x-firecrawl-map-status-code"),
+    landedUrl: response.headers.get("x-firecrawl-map-landed-url"),
+  };
+}
+
+async function map(path, options = {}, signal = AbortSignal.timeout(18_000)) {
+  return (await mapWithMeta(path, options, signal)).links;
 }
 
 if (process.argv[2] === "fixture") {
@@ -183,10 +272,59 @@ if (process.argv[2] === "fixture") {
     );
   });
 
-  test("A forbidden starting page gets one plain fetch and no render", async () => {
-    await map("/forbidden");
+  test("A 404 starting page gets one plain fetch and no render", async () => {
+    const res = await mapWithMeta("/not-found");
+    assert.equal(res.outcome, "http_not_found");
+    assert.equal(res.statusCode, "404");
     const counts = await (await fetch(`${fixture}/stats`)).json();
-    assert.equal(counts["/forbidden"], 1);
+    assert.equal(counts["/not-found"], 1);
+  });
+
+  test("Map retries a WAF-blocked 403 starting page with a browser", async () => {
+    const res = await mapWithMeta("/waf-protected");
+    assert.deepEqual(res.links, [
+      `${fixture}/waf-protected`,
+      `${fixture}/waf-protected/pricing`,
+    ]);
+    assert.equal(res.outcome, "links_found");
+  });
+
+  test("Utility /cdn-cgi and /_next links do not suppress browser link discovery", async () => {
+    const res = await mapWithMeta("/cf-shell");
+    assert.deepEqual(res.links, [
+      `${fixture}/cf-shell`,
+      `${fixture}/cf-shell/team`,
+    ]);
+    assert.equal(res.outcome, "links_found");
+  });
+
+  test("Map follows slow cross-domain redirects and honors the landed robots.txt", async () => {
+    const res = await mapWithMeta("/slow-domain-redirect", {
+      filterByPath: false,
+    });
+    assert.ok(res.links.includes(`${rebranded}/product`), JSON.stringify(res.links));
+    assert.ok(!res.links.includes(`${rebranded}/secret/plan`), JSON.stringify(res.links));
+    assert.equal(res.outcome, "links_found");
+  });
+
+  test("Map stops sitemap index recursion early once limit is satisfied", async () => {
+    const started = Date.now();
+    const links = await map("/catalog", {
+      limit: 2,
+      timeout: 8_000,
+    });
+    assert.deepEqual(links, [`${fixture}/catalog/one`, `${fixture}/catalog/two`]);
+    assert.ok(Date.now() - started < 5_000, "should abort hung child sitemap");
+  });
+
+  test("Map distinguishes verified single-page sites from challenge walls", async () => {
+    const single = await mapWithMeta("/single-page");
+    assert.deepEqual(single.links, [`${fixture}/single-page`]);
+    assert.equal(single.outcome, "verified_single_page");
+
+    const wall = await mapWithMeta("/challenge-wall");
+    assert.deepEqual(wall.links, [`${fixture}/challenge-wall`]);
+    assert.equal(wall.outcome, "blocked_or_challenge");
   });
 
   test("Map caps browser retries and releases pages after client disconnects", async () => {

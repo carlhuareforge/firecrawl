@@ -387,5 +387,22 @@ export async function mapController(
     ...(warning && { warning }),
   };
 
-  if (!res.destroyed) return res.status(200).json(response);
+  if (!res.destroyed) {
+    if (result.discovery) {
+      res.setHeader?.("X-Firecrawl-Map-Outcome", result.discovery.outcome);
+      if (result.discovery.statusCode !== undefined) {
+        res.setHeader?.(
+          "X-Firecrawl-Map-Status-Code",
+          String(result.discovery.statusCode),
+        );
+      }
+      if (result.discovery.landedUrl) {
+        res.setHeader?.(
+          "X-Firecrawl-Map-Landed-Url",
+          result.discovery.landedUrl,
+        );
+      }
+    }
+    return res.status(200).json(response);
+  }
 }
