@@ -8,10 +8,13 @@ import {
   Page,
 } from 'playwright';
 import dotenv from 'dotenv';
-import UserAgent from 'user-agents';
 import { getError } from './helpers/get_error';
 import { Server } from 'proxy-chain';
 import { isInternalHost, ssrfPrepareRequest } from './helpers/ssrf';
+import {
+  buildDesktopChromeUserAgent,
+  resolveContextUserAgent,
+} from './helpers/user_agent';
 
 dotenv.config();
 
@@ -176,6 +179,7 @@ interface UrlModel {
 }
 
 let browser: Browser;
+let defaultUserAgent: string | undefined;
 
 const initializeBrowser = async () => {
   browser = await chromium.launch({
@@ -190,6 +194,7 @@ const initializeBrowser = async () => {
       '--disable-gpu',
     ],
   });
+  defaultUserAgent = buildDesktopChromeUserAgent(browser.version());
 };
 
 const createContext = async (
@@ -199,7 +204,10 @@ const createContext = async (
   context: BrowserContext;
   securityState: ContextSecurityState;
 }> => {
-  const userAgent = userAgentOverride || new UserAgent().toString();
+  const userAgent = resolveContextUserAgent(
+    userAgentOverride,
+    defaultUserAgent,
+  );
   const viewport = { width: 1280, height: 800 };
   const securityState: ContextSecurityState = {
     blockedNavigationRequestUrl: null,

@@ -49,7 +49,7 @@ services:
   browser:
     cpus: 16
     mem_limit: 12g
-    image: ava-firecrawl-browser:2.11.872-rb1
+    image: ava-firecrawl-browser:2.11.872-rb2
     build:
       context: ../..
       dockerfile: deploy/ava/Dockerfile.browser
@@ -58,7 +58,6 @@ services:
       PORT: '3000'
       MAX_CONCURRENT_PAGES: '80'
       BLOCK_RESOURCE_TYPES: image,media,font
-      DEBUG: pw:browser
     volumes: ['./dns.cjs:/opt/ava/dns.cjs:ro']
     restart: unless-stopped
     logging: *logs

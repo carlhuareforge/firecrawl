@@ -1,15 +1,18 @@
 FROM ghcr.io/firecrawl/firecrawl@sha256:3efd1edfb6309fac0251cd9c5a13fbe7719dd0d7d5c4b456568009b0534ff6d8 AS compile
 WORKDIR /app
 COPY apps/playwright-service-ts/api.ts /tmp/browser.ts
+COPY apps/playwright-service-ts/helpers/user_agent.ts /tmp/user_agent.ts
 RUN node -e '\
   const fs = require("node:fs"); \
   const ts = require("typescript"); \
-  const result = ts.transpileModule(fs.readFileSync("/tmp/browser.ts", "utf8"), { \
-    fileName: "api.ts", reportDiagnostics: true, \
-    compilerOptions: { target: ts.ScriptTarget.ES2016, module: ts.ModuleKind.CommonJS, esModuleInterop: true } \
-  }); \
-  if (result.diagnostics.length) throw new Error(result.diagnostics.map(x => ts.flattenDiagnosticMessageText(x.messageText, "\n")).join("\n")); \
-  fs.writeFileSync("/tmp/api.js", result.outputText);'
+  for (const [src, dst] of [["/tmp/browser.ts", "/tmp/api.js"], ["/tmp/user_agent.ts", "/tmp/user_agent.js"]]) { \
+    const result = ts.transpileModule(fs.readFileSync(src, "utf8"), { \
+      fileName: src, reportDiagnostics: true, \
+      compilerOptions: { target: ts.ScriptTarget.ES2016, module: ts.ModuleKind.CommonJS, esModuleInterop: true } \
+    }); \
+    if (result.diagnostics.length) throw new Error(result.diagnostics.map(x => ts.flattenDiagnosticMessageText(x.messageText, "\n")).join("\n")); \
+    fs.writeFileSync(dst, result.outputText); \
+  }'
 
 FROM ghcr.io/firecrawl/playwright-service@sha256:227ce3d8059173925a5a0697c63a1e947662cca934a609151651f578774edd5d
 USER root
@@ -18,4 +21,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl procps ca-
 # instead of silently dropping the patch.
 RUN echo "7b76d496d68bbaf46b6fede33e8063336e00583ded8901a1c5d3296b883d231e  dist/api.js" | sha256sum -c -
 COPY --from=compile /tmp/api.js dist/api.js
+COPY --from=compile /tmp/user_agent.js dist/helpers/user_agent.js
 ENTRYPOINT ["node", "dist/api.js"]

@@ -1,2 +1,3 @@
 *
 !apps/playwright-service-ts/api.ts
+!apps/playwright-service-ts/helpers/user_agent.ts
